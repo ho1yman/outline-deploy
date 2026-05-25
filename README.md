@@ -13,8 +13,8 @@ https://github.com/outline/outline/
    ```
 2. 用于拉取容器镜像的脚本pull_images.sh
 
-   ```bash
-   #!/bin/bash
+```bash
+#!/bin/bash
 set -e
 
 COMPOSE_FILE="$(dirname "$0")/docker-compose.yml"
@@ -38,8 +38,7 @@ echo ""
 echo "=========================================="
 echo "  全部镜像拉取完成!"
 echo "=========================================="
-
-   ```
+```
 
 3. 创建docker network
 
