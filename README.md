@@ -13,32 +13,32 @@ https://github.com/outline/outline/
    ```
 2. 用于拉取容器镜像的脚本pull_images.sh
 
-```bash
-#!/bin/bash
-set -e
+   ```bash
+   #!/bin/bash
+   set -e
 
-COMPOSE_FILE="$(dirname "$0")/docker-compose.yml"
+   COMPOSE_FILE="$(dirname "$0")/docker-compose.yml"
 
-IMAGES=($(grep -oP 'image:\s*\K\S+' "$COMPOSE_FILE"))
+   IMAGES=($(grep -oP 'image:\s*\K\S+' "$COMPOSE_FILE"))
 
-echo "=========================================="
-echo "  批量拉取 Outline 容器镜像"
-echo "  共 ${#IMAGES[@]} 个镜像"
-echo "=========================================="
-echo ""
+   echo "=========================================="
+   echo "  批量拉取 Outline 容器镜像"
+   echo "  共 ${#IMAGES[@]} 个镜像"
+   echo "=========================================="
+   echo ""
 
-for image in "${IMAGES[@]}"; do
-  echo "[$(date '+%H:%M:%S')] 正在拉取: $image"
-  docker pull "$image"
-  echo "[$(date '+%H:%M:%S')] $image 拉取完成"
-  echo "------------------------------------------"
-done
+   for image in "${IMAGES[@]}"; do
+     echo "[$(date '+%H:%M:%S')] 正在拉取: $image"
+     docker pull "$image"
+     echo "[$(date '+%H:%M:%S')] $image 拉取完成"
+     echo "------------------------------------------"
+   done
 
-echo ""
-echo "=========================================="
-echo "  全部镜像拉取完成!"
-echo "=========================================="
-```
+   echo ""
+   echo "=========================================="
+   echo "  全部镜像拉取完成!"
+   echo "=========================================="
+   ```
 
 3. 创建docker network
 
