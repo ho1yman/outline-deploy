@@ -11,20 +11,42 @@ https://github.com/outline/outline/
    mkdir /opt/compose/outline
    cd /opt/compose/outline
    ```
-2. 拉取容器镜像
+2. 用于拉取容器镜像的脚本pull_images.sh
 
-   ```sh
-   docker pull keycloak/keycloak:26.1.2
-   docker pull postgres:15-alpine
-   docker pull redis:7-alpine
-   docker pull minio/minio:latest
-   docker pull outlinewiki/outline:0.83.0
+   ```bash
+   #!/bin/bash
+set -e
+
+COMPOSE_FILE="$(dirname "$0")/docker-compose.yml"
+
+# 从 docker-compose.yml 中提取所有 image 行，取第一个非注释的空白分隔字段
+IMAGES=($(grep -oP 'image:\s*\K\S+' "$COMPOSE_FILE"))
+
+echo "=========================================="
+echo "  批量拉取 Outline 容器镜像"
+echo "  共 ${#IMAGES[@]} 个镜像"
+echo "=========================================="
+echo ""
+
+for image in "${IMAGES[@]}"; do
+  echo "[$(date '+%H:%M:%S')] 正在拉取: $image"
+  docker pull "$image"
+  echo "[$(date '+%H:%M:%S')] $image 拉取完成"
+  echo "------------------------------------------"
+done
+
+echo ""
+echo "=========================================="
+echo "  全部镜像拉取完成!"
+echo "=========================================="
+
    ```
 3. 创建docker network
 
-   ```sh
+   ```bash
    docker network create --driver bridge --subnet 192.168.232.0/24 outline_network
    ```
+
 4. 创建两个secretKey
 
    ```sh
@@ -33,6 +55,7 @@ https://github.com/outline/outline/
    # create outline UTILS_SECRET
    openssl rand -hex 32
    ```
+   
 5. 初始化数据库
 
    ```sh
@@ -58,15 +81,18 @@ https://github.com/outline/outline/
    ```sh
    docker-compose -f init_database.yml down
    ```
+   
 6. 运行docker-compose.yml
 
    ```sh
    docker-compose up -d
    ```
+   
 7. 创建minio bucket
 
    访问minio控制台页面，手动创建outline-bucket
-8. 初始化oidc鉴权
+   
+9. 初始化oidc鉴权
 
    访问keycloak控制台页面，手动创建realm应用、realm客户端，生成密钥并填入到.env的OIDC_CLIENT_SECRET
 
