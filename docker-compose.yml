@@ -1,39 +1,70 @@
 networks:
   outline_network:
     driver: bridge
-    external: true 
+    external: true
 
 services:
-  # OIDC Server (Keycloak)
-  keycloak:
-    image: keycloak/keycloak:26.1.2   #quay.io/keycloak/keycloak:21.1.1
-    container_name: keycloak
+  traefik:
+    image: traefik:v3.7.1 #traefik:v3.4.0-rc2
+    container_name: traefik
+    networks:
+      outline_network:
+        ipv4_address: 192.168.232.17
     ports:
-      - "${KEYCLOAK_PORT:-7780}:8080"
+      - "10087:10087"
+      - "8099:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./traefik/dynamic:/etc/traefik/dynamic:ro
+      - ./traefik/logs:/var/log/traefik
+    extra_hosts:
+      - "outline:192.168.232.16"
+      - "keycloak:192.168.232.12"
+      - "minio:192.168.232.15"
+      #- "external.outline.xyz:192.168.63.1"
+    depends_on:
+      - oidc-service
+      - outline
+      - minio
+    restart: unless-stopped
+
+  # OIDC Service (lightweight Keycloak replacement)
+  oidc-service:
+    image: openwrt:1080/public/oidc-service:1.1.4  # 1.1.4支持视频背景 1.1.3修复漏洞 1.1.2样式美化   # oidc-service:1.0.0  # latest
+    container_name: oidc
+    ports:
+      - "${KEYCLOAK_PORT:-7780}:8800"
     extra_hosts:
       - "postgres:192.168.232.13"
-      - "${DOMAIN_NAME:-outline.local}:${HOST_IP:-192.168.63.147}"
     networks:
       outline_network:
         ipv4_address: 192.168.232.12
-    command: start-dev        # 开发模式，可通过 KEYCLOAK_ADMIN 和 KEYCLOAK_ADMIN_PASSWORD 环境变量 初始化默认的管理员用户
     environment:
-      KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
-      KC_DB_USERNAME: keycloak
-      KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
-      KEYCLOAK_ADMIN: admin                                # default user
-      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}  # default user's password
-      #KC_HEALTH_ENABLED: true
-      # 
-      KC_HOSTNAME: ${DOMAIN_NAME:-outline.local}
-      KC_HOSTNAME_STRICT: "false"
+      OIDC_PORT: 8800
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USERNAME: ${OIDC_DB_USERNAME}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      OIDC_ISSUER: http://oidc.outline.xyz:10087
+      OIDC_JWT_SECRET: ${OIDC_JWT_SECRET}
+      OIDC_LOGIN_BG: ${OIDC_LOGIN_BG:-http://minio.outline.xyz:10087/outline-bucket/public/landing.mp4}  # Caves-of-Hercules.png  # ubuntu_by_arman1992.jpg
+      OIDC_LOGIN_BG_COLOR: ${OIDC_LOGIN_BG_COLOR:-#f0f2f5}
+      OIDC_LOGIN_LOGO: ${OIDC_LOGIN_LOGO:-}
+      OIDC_LOGIN_TITLE: ${OIDC_LOGIN_TITLE:-登录 OutlineWiki}
+      OIDC_LOGIN_PRIMARY_COLOR: ${OIDC_LOGIN_PRIMARY_COLOR:-#1890ff}
+      OIDC_LOGIN_AUTO_LOGIN_ENABLED: ${OIDC_LOGIN_AUTO_LOGIN_ENABLED:-false}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.oidc.rule=Host(`oidc.outline.xyz`)"
+      - "traefik.http.routers.oidc.entrypoints=web"
+      - "traefik.http.services.oidc.loadbalancer.server.port=8800"
     depends_on:
       postgres:
         condition: service_healthy
     restart: unless-stopped
 
-  # PostgreSQL for Outline
+    # PostgreSQL for Outline
   postgres:
     image: postgres:15-alpine
     container_name: outline-db
@@ -44,13 +75,13 @@ services:
       - "54322:5432"
     volumes:
       - ./pg-data:/var/lib/postgresql/data
-    #environment:
+      #environment:
       #POSTGRES_DB: outline
       #POSTGRES_USER: outline
       #POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U outline"]
+      test: [ "CMD-SHELL", "pg_isready -U outline" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -66,7 +97,7 @@ services:
       - ./redis-data:/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -78,39 +109,65 @@ services:
     networks:
       outline_network:
         ipv4_address: 192.168.232.15
+        #next_network:
+        #ipv4_address: 58.246.133.36
     ports:
-      - "${MINIO_API_PORT:-7790}:9000"  # MinIO API port
-      - "${MINIO_CONSOLE_PORT:-7791}:9001"  # MinIO Console port
+      #- "${MINIO_API_PORT:-7790}:9000"  # MinIO API 端口
+      - "${MINIO_CONSOLE_PORT:-7791}:9001" # MinIO 控制台端口
     volumes:
       - ./minio-data:/data
     environment:
-      MINIO_ROOT_USER: minio
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     command: server /data --console-address ":9001"
+    # traefik 配置
+    labels:
+      - "traefik.enable=true"
+      #- "traefik.http.routers.minio.rule=PathPrefix(`/outline-bucket`)"
+      - "traefik.http.routers.minio.rule=Host(`minio.outline.xyz`)" # 使用二级域名
+      - "traefik.http.routers.minio.entrypoints=web"
+      - "traefik.http.services.minio.loadbalancer.server.port=9000"
+      #- "traefik.http.middlewares.minio-stripprefix.stripprefix.prefixes=/minio"
+      #- "traefik.http.routers.minio.middlewares=minio-stripprefix"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
       interval: 30s
       timeout: 20s
       retries: 3
 
   # Outline Wiki
   outline:
-    image: outlinewiki/outline:0.83.0
+    # build: /home/oxy/projects/outline
+    image: outlinewiki/outline:1.8.0-1      # 1.7.1-dev4  # 1.8.0-1  # 1.7.1-dev
     container_name: outline
     networks:
       outline_network:
         ipv4_address: 192.168.232.16
-    ports:
-      - "${OUTLINE_PORT:-7730}:3000"
+      #ports:
+      #- "${OUTLINE_PORT:-7730}:3000"
     extra_hosts:
       - "postgres:192.168.232.13"
       - "redis:192.168.232.14"
       - "minio:192.168.232.15"
       - "keycloak:192.168.232.12"
       - "outline:192.168.232.16"
-      - "${DOMAIN_NAME:-outline.local}:${HOST_IP:-192.168.63.147}"
+      #- "${DOMAIN_NAME:-outline.xyz}:${HOST_IP}"
       - "smtp.sina.com:123.126.45.161"
+      - "nextcloud.outline.xyz:${HOST_IP}"
+      - "onlyoffice.outline.xyz:${HOST_IP}"
+      # 👉这个也是必要的，outline登录鉴权时，从traefik去访问keycloak
+      - "oidc.outline.xyz:192.168.232.17"
+      - "minio.outline.xyz:192.168.232.17"
+      - "app.outline.xyz:192.168.232.17"
+    # traefik 配置
+    labels:
+      - "traefik.enable=true"
+      #- "traefik.http.routers.outline.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.outline.rule=Host(`app.outline.xyz`) && PathPrefix(`/`)" # Host(`app.outline.xyz`) # 使用二级域名
+      - "traefik.http.routers.outline.entrypoints=web"
+      - "traefik.http.services.outline.loadbalancer.server.port=3000"
+      - "traefik.http.routers.outline.priority=1"
     depends_on:
       postgres:
         condition: service_healthy
@@ -118,7 +175,7 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
-      keycloak:
+      oidc-service:
         condition: service_started
     environment:
       NODE_ENV: production
@@ -126,39 +183,65 @@ services:
       PGSSLMODE: disable
       DATABASE_URL: postgres://outline:${POSTGRES_PASSWORD}@postgres:5432/outline
       DATABASE_URL_TEST: postgres://outline:${POSTGRES_PASSWORD}@postgres:5432/outline-test
-      
+
       # Redis
       REDIS_URL: redis://redis:6379
-      
-      # URL
-      URL: http://${DOMAIN_NAME:-outline.local}:${OUTLINE_PORT:-7730}   # http://${HOST_IP}:${OUTLINE_PORT:-7730} 
+
+      # 👉outline外部访问
+      URL: http://${OUTLINE_DOMAIN_NAME:-app.outline.xyz}:${OUTLINE_PROXY_PORT:-10087}
       PORT: 3000
       FORCE_HTTPS: "false"
-      
+
       # Storage
       FILE_STORAGE: s3
-      AWS_ACCESS_KEY_ID: minio
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
       AWS_REGION: us-east-1
-      AWS_S3_UPLOAD_BUCKET_NAME: outline-bucket    # visite http://outline.local:7791 to create it
-      AWS_S3_UPLOAD_BUCKET_URL: http://${DOMAIN_NAME:-outline.local}:7790
-      FILE_STORAGE_UPLOAD_MAX_SIZE: 26214400    #AWS_S3_UPLOAD_MAX_SIZE: 26214400
+      AWS_S3_UPLOAD_BUCKET_NAME: outline-bucket
+      # 👉outline外部调用minio
+      AWS_S3_UPLOAD_BUCKET_URL: http://${MINIO_DOMAIN_NAME:-minio.outline.xyz}:10087
       AWS_S3_FORCE_PATH_STYLE: 'true'
-      
+      #AWS_S3_ENDPOINT: http://${MONIO_DOMAIN_NAME:-outline.xyz}:10087
+      FILE_STORAGE_UPLOAD_MAX_SIZE: 26214400 #AWS_S3_UPLOAD_MAX_SIZE: 26214400
+
       # Authentication
-      OIDC_CLIENT_ID: outline
-      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}   #your_client_secret from Keycloak
-      OIDC_AUTH_URI: http://${DOMAIN_NAME:-outline.local}:${KEYCLOAK_PORT:-7780}/realms/outline/protocol/openid-connect/auth
-      OIDC_TOKEN_URI: http://${DOMAIN_NAME:-outline.local}:${KEYCLOAK_PORT:-7780}/realms/outline/protocol/openid-connect/token
-      OIDC_USERINFO_URI: http://${DOMAIN_NAME:-outline.local}:${KEYCLOAK_PORT:-7780}/realms/outline/protocol/openid-connect/userinfo
-      #OIDC_LOGOUT_URL: http://outline.local:7780/realms/outline/protocol/openid-connect/logout?redirect_uri=http://outline.local:7730/login
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET} #your_client_secret from Keycloak
+      # 👉outline外部调用keycloak
+      OIDC_AUTH_URI: http://${KC_DOMAIN_NAME:-oidc.outline.xyz}:${KEYCLOAK_PROXY_PORT:-10087}/realms/outline/protocol/openid-connect/auth
+      OIDC_TOKEN_URI: http://${KC_DOMAIN_NAME:-oidc.outline.xyz}:${KEYCLOAK_PROXY_PORT:-10087}/realms/outline/protocol/openid-connect/token
+      OIDC_USERINFO_URI: http://${KC_DOMAIN_NAME:-oidc.outline.xyz}:${KEYCLOAK_PROXY_PORT:-10087}/realms/outline/protocol/openid-connect/userinfo
+      #OIDC_LOGOUT_URL: http://outline.xyz:7780/realms/outline/protocol/openid-connect/logout?redirect_uri=http://outline.xyz:7730/login
       #OIDC_AUTO_SIGN_IN: true
-      OIDC_DISPLAY_NAME: Keycloak
-      
+      OIDC_DISPLAY_NAME: OIDC   # Keycloak
+
       # Secret keys (generate with `openssl rand -hex 32`)
-      SECRET_KEY: replace_with_a_generated_secret
-      UTILS_SECRET: replace_with_another_generated_secret
-      
+      SECRET_KEY: ${SECRET_KEY}
+      UTILS_SECRET: ${UTILS_SECRET}
+
+      # SMTP 配置 (用于发送邮件通知)
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USERNAME: ${SMTP_USERNAME}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL}
+      SMTP_REPLY_EMAIL: ${SMTP_REPLY_EMAIL}
+      SMTP_TLS: ${SMTP_TLS}
+      SMTP_SECURE: ${SMTP_SECURE}
+      # 启用邮件通知
+      SMTP: ${SMTP_ENABLED}
+
       # 可选：设置默认语言
       DEFAULT_LANGUAGE: zh_CN
+
+      # ALLOW_ANONYMOUS_EDIT: true
+      # ANONYMOUS_USER_ID: 3728a12d-b5eb-4035-b053-67496d7d9d9d
+
     restart: unless-stopped
+    healthcheck:
+      test: [ "CMD-SHELL", "wget -qO- \"http://localhost:${PORT:-3000}/_health\" | grep -q \"OK\" || exit 1" ]
+      interval: 20s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
