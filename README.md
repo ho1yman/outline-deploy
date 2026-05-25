@@ -19,7 +19,6 @@ set -e
 
 COMPOSE_FILE="$(dirname "$0")/docker-compose.yml"
 
-# 从 docker-compose.yml 中提取所有 image 行，取第一个非注释的空白分隔字段
 IMAGES=($(grep -oP 'image:\s*\K\S+' "$COMPOSE_FILE"))
 
 echo "=========================================="
