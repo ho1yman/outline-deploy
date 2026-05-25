@@ -30,6 +30,7 @@ services:
     restart: unless-stopped
 
   # OIDC Service (lightweight Keycloak replacement)
+  # git clone https://github.com/ho1yman/outline-oidc-provider.git
   oidc-service:
     image: openwrt:1080/public/oidc-service:1.1.4  # 1.1.4支持视频背景 1.1.3修复漏洞 1.1.2样式美化   # oidc-service:1.0.0  # latest
     container_name: oidc
